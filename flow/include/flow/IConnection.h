@@ -23,6 +23,8 @@
 
 #include <cstdint>
 #include <limits>
+#include <list>
+#include <unordered_map>
 
 #include <boost/asio/ip/tcp.hpp>
 
@@ -102,15 +104,21 @@ public:
 	virtual NetworkAddress getListenAddress() const = 0;
 };
 
-// DNSCache is a class maintaining a <hostname, vector<NetworkAddress>> mapping.
+// DNSCache is a TTL-aware LRU cache maintaining a mapping from "host:service" -> addresses
 class DNSCache {
 public:
 	DNSCache() = default;
-	explicit DNSCache(const std::map<std::string, std::vector<NetworkAddress>>& dnsCache)
-	  : hostnameToAddresses(dnsCache) {}
+	explicit DNSCache(const std::map<std::string, std::vector<NetworkAddress>>& dnsCache) {
+		for (auto& p : dnsCache) {
+			addFromParse(p.first, p.second);
+		}
+	}
 
 	Optional<std::vector<NetworkAddress>> find(const std::string& host, const std::string& service);
-	void add(const std::string& host, const std::string& service, const std::vector<NetworkAddress>& addresses);
+	void add(const std::string& host, const std::string& service, const std::vector<NetworkAddress>& addresses, double ttl);
+	void add(const std::string& host, const std::string& service, const std::vector<NetworkAddress>& addresses) {
+		add(host, service, addresses, FLOW_KNOBS->DNS_DEFAULT_TTL);
+	}
 	void remove(const std::string& host, const std::string& service);
 	void clear();
 
@@ -120,7 +128,20 @@ public:
 	static DNSCache parseFromString(const std::string& s);
 
 private:
-	std::map<std::string, std::vector<NetworkAddress>> hostnameToAddresses;
+	struct Entry {
+		std::vector<NetworkAddress> addresses;
+		double insertedAt = 0.0; // epoch from g_network->now()
+		double ttl = 0.0;        // seconds
+	};
+
+	// key is host:service
+	std::unordered_map<std::string, Entry> hostnameToAddresses;
+	std::list<std::string> lruList; // most-recently-used at front
+	std::unordered_map<std::string, std::list<std::string>::iterator> lruIt;
+
+	void touchLRU(const std::string& key);
+	void evictIfNeeded();
+	void addFromParse(const std::string& key, const std::vector<NetworkAddress>& addresses);
 };
 
 class IUDPSocket;

@@ -51,6 +51,11 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( ENABLE_COORDINATOR_DNS_CACHE,                      false ); if( randomize && BUGGIFY ) ENABLE_COORDINATOR_DNS_CACHE = true;
 	init( CACHE_REFRESH_INTERVAL_WHEN_ALL_ALTERNATIVES_FAILED, 1.0 );
 
+	// DNS cache knobs
+	init( DNS_DEFAULT_TTL,                                    60.0 ); // seconds
+	init( DNS_CACHE_MAX_ENTRIES,                              1000 );
+	init( DNS_CACHE_REFRESH_JITTER,                            0.1 ); // fraction of TTL
+
 	init( DELAY_JITTER_OFFSET,                                 0.9 );
 	init( DELAY_JITTER_RANGE,                                  0.2 );
 	init( BUSY_WAIT_THRESHOLD,                                   0 ); // 1e100 == never sleep

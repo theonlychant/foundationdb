@@ -254,36 +254,60 @@ std::string formatIpPort(const IPAddress& ip, uint16_t port) {
 }
 
 Optional<std::vector<NetworkAddress>> DNSCache::find(const std::string& host, const std::string& service) {
-	auto it = hostnameToAddresses.find(host + ":" + service);
+	std::string key = host + ":" + service;
+	auto it = hostnameToAddresses.find(key);
 	if (it != hostnameToAddresses.end()) {
-		return it->second;
+		double nowt = g_network ? g_network->now() : 0.0;
+			if (it->second.ttl > 0 && nowt > 0.0 && (nowt - it->second.insertedAt) >= it->second.ttl) {
+			// expired
+			remove(host, service);
+			return {};
+		}
+		touchLRU(key);
+		return it->second.addresses;
 	}
 	return {};
 }
 
-void DNSCache::add(const std::string& host, const std::string& service, const std::vector<NetworkAddress>& addresses) {
-	hostnameToAddresses[host + ":" + service] = addresses;
+void DNSCache::add(const std::string& host, const std::string& service, const std::vector<NetworkAddress>& addresses, double ttl) {
+	std::string key = host + ":" + service;
+	Entry e;
+	e.addresses = addresses;
+	e.insertedAt = g_network ? g_network->now() : 0.0;
+	e.ttl = ttl;
+	hostnameToAddresses[key] = std::move(e);
+	// update LRU
+	touchLRU(key);
+	evictIfNeeded();
 }
 
 void DNSCache::remove(const std::string& host, const std::string& service) {
-	auto it = hostnameToAddresses.find(host + ":" + service);
+	std::string key = host + ":" + service;
+	auto it = hostnameToAddresses.find(key);
 	if (it != hostnameToAddresses.end()) {
 		hostnameToAddresses.erase(it);
+	}
+	auto lit = lruIt.find(key);
+	if (lit != lruIt.end()) {
+		lruList.erase(lit->second);
+		lruIt.erase(lit);
 	}
 }
 
 void DNSCache::clear() {
 	hostnameToAddresses.clear();
+	lruList.clear();
+	lruIt.clear();
 }
 
 std::string DNSCache::toString() {
 	std::string ret;
-	for (auto it = hostnameToAddresses.begin(); it != hostnameToAddresses.end(); ++it) {
-		if (it != hostnameToAddresses.begin()) {
-			ret += ';';
-		}
-		ret += it->first + ',';
-		const std::vector<NetworkAddress>& addresses = it->second;
+	bool first = true;
+	for (auto& p : hostnameToAddresses) {
+		if (!first) ret += ';';
+		first = false;
+		ret += p.first + ',';
+		const std::vector<NetworkAddress>& addresses = p.second.addresses;
 		for (int i = 0; i < addresses.size(); ++i) {
 			ret += addresses[i].toString();
 			if (i != addresses.size() - 1) {
@@ -324,6 +348,36 @@ DNSCache DNSCache::parseFromString(const std::string& s) {
 	}
 
 	return DNSCache(dnsCache);
+}
+
+void DNSCache::touchLRU(const std::string& key) {
+	auto it = lruIt.find(key);
+	if (it != lruIt.end()) {
+		lruList.erase(it->second);
+		lruList.push_front(key);
+		lruIt[key] = lruList.begin();
+	} else {
+		lruList.push_front(key);
+		lruIt[key] = lruList.begin();
+	}
+}
+
+void DNSCache::evictIfNeeded() {
+	int maxEntries = FLOW_KNOBS->DNS_CACHE_MAX_ENTRIES;
+	while (maxEntries > 0 && (int)hostnameToAddresses.size() > maxEntries) {
+		auto last = lruList.back();
+		hostnameToAddresses.erase(last);
+		lruIt.erase(last);
+		lruList.pop_back();
+	}
+}
+
+void DNSCache::addFromParse(const std::string& key, const std::vector<NetworkAddress>& addresses) {
+	// When parsing from string, use default ttl
+	std::string::size_type pos = key.find(':');
+	std::string host = (pos == std::string::npos) ? key : key.substr(0, pos);
+	std::string service = (pos == std::string::npos) ? "" : key.substr(pos + 1);
+	add(host, service, addresses, FLOW_KNOBS->DNS_DEFAULT_TTL);
 }
 
 TEST_CASE("/flow/DNSCache") {

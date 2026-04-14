@@ -2070,7 +2070,14 @@ ACTOR static Future<std::vector<NetworkAddress>> resolveTCPEndpoint_impl(Net2* s
 	}
 	tcpResolver.cancel();
 	std::vector<NetworkAddress> ret = result.get();
-	self->dnsCache.add(host, service, ret);
+	// Determine TTL. If a DNS library with TTL support is available, use that.
+	// Otherwise, use configured default TTL.
+#ifdef HAVE_CARES
+	double ttl = /* TODO: obtain TTL from c-ares result */ FLOW_KNOBS->DNS_DEFAULT_TTL;
+#else
+	double ttl = FLOW_KNOBS->DNS_DEFAULT_TTL;
+#endif
+	self->dnsCache.add(host, service, ret, ttl);
 
 	return ret;
 }
