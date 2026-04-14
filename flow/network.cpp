@@ -419,6 +419,37 @@ TEST_CASE("/flow/DNSCacheParsing") {
 	return Void();
 }
 
+TEST_CASE("/flow/DNSCache/TTLAndLRU") {
+	// TTL expiry test
+	DNSCache dnsCache;
+	std::vector<NetworkAddress> addrs;
+	NetworkAddress a1(IPAddress(0x01010101), 10);
+	addrs.push_back(a1);
+
+	// ttl == 0 should expire immediately
+	dnsCache.add("ttlhost", "p", addrs, 0.0);
+	ASSERT(!dnsCache.find("ttlhost", "p").present());
+
+	// LRU eviction test: set max entries to 1
+	int oldMax = FLOW_KNOBS->DNS_CACHE_MAX_ENTRIES;
+	FLOW_KNOBS->DNS_CACHE_MAX_ENTRIES = 1;
+	dnsCache.clear();
+
+	NetworkAddress a2(IPAddress(0x02020202), 20);
+	NetworkAddress a3(IPAddress(0x03030303), 30);
+	dnsCache.add("host1", "p1", { a2 }, 60.0);
+	dnsCache.add("host2", "p2", { a3 }, 60.0);
+
+	// host1 should have been evicted (maxEntries == 1)
+	ASSERT(!dnsCache.find("host1", "p1").present());
+	ASSERT(dnsCache.find("host2", "p2").present());
+
+	// restore knob
+	FLOW_KNOBS->DNS_CACHE_MAX_ENTRIES = oldMax;
+
+	return Void();
+}
+
 Future<Reference<IConnection>> INetworkConnections::connect(const std::string& host,
                                                             const std::string& service,
                                                             bool isTLS) {
